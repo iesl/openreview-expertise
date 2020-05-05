@@ -19,7 +19,7 @@ from collections import defaultdict, OrderedDict
 from .config import ModelConfig
 
 def convert_to_list(config_invitations):
-    if (isinstance(config_invitations, str)):
+    if (isinstance(config_invitations, str) or isinstance(config_invitations, dict)):
         invitations = [config_invitations]
     else:
         invitations = config_invitations
@@ -230,23 +230,99 @@ def get_bids(openreview_client, config):
         bid_iterators.append(openreview.tools.iterget_edges(
             openreview_client, invitation=invitation_id))
 
+    all_bids = defaultdict(list)
+
     # Use chain to put together bid iterators. Once one is done continue with the next one.
     for bid in tqdm(chain(*bid_iterators), desc='writing bids'):
         reduced_bid = {
             'id': bid.id,
-            'invitation': bid.invitation,
             'forum': getattr(bid, 'forum', None) or getattr(bid, 'head'),
             'tag': getattr(bid, 'tag', None) or getattr(bid, 'label'),
             'signature': getattr(bid, 'tail', None) or getattr(bid, 'signatures')[0],
         }
-        file_path = Path(bids_dir).joinpath(reduced_bid['forum'] + '.jsonl')
+        all_bids[reduced_bid['signature']].append(reduced_bid)
 
         if reduced_bid['forum'] in metadata['bid_counts']:
             metadata['bid_counts'][reduced_bid['forum']] += 1
             metadata['archive_counts'][reduced_bid['signature']]['bid'] += 1
 
-            with open(file_path, 'a') as f:
-                f.write(json.dumps(reduced_bid) + '\n')
+    file_path = Path(bids_dir).joinpath('bids.json')
+    with open(file_path, 'w') as f:
+        json.dump(all_bids, f, indent=4)
+
+def get_assignments(openreview_client, config):
+    assignments_params = convert_to_list(config['assignments'])
+
+    assignment_iterators = []
+    for params in assignments_params:
+        if isinstance(params, dict):
+            try:
+                assignment_iterators.append(openreview.tools.iterget_edges(openreview_client, **params))
+                assignment_iterators.append(openreview.tools.iterget_notes(openreview_client, **params))
+            except:
+                assignment_iterators.append(openreview.tools.iterget_notes(openreview_client, **params))
+        else:
+            invitation_id = params
+            assignment_iterators.append(openreview.tools.iterget_edges(
+                openreview_client, invitation=invitation_id))
+            assignment_iterators.append(openreview.tools.iterget_notes(
+                openreview_client, invitation=invitation_id))
+
+    all_assignments = defaultdict(list)
+    # Use chain to put together bid iterators. Once one is done continue with the next one.
+    for assignment in tqdm(chain(*assignment_iterators), desc='writing assignments'):
+        # This is for old conferences like ICLR 2018
+        if getattr(assignment, 'content', None) and assignment.content.get('assignments'):
+            papers = assignment.content.get('assignments')
+            for paper in papers.values():
+                if len(paper.get('assigned', [])) > 0:
+                    for userId in paper.get('assigned'):
+                        all_assignments[userId].append({
+                            'id': None,
+                            'head': paper['forum'],
+                            'tail': userId,
+                            'weight': None
+                        })
+            continue
+
+        # This is for venues like ICLR 2019
+        if getattr(assignment, 'content', None) and assignment.content.get('assignedGroups'):
+            for group in assignment.content.get('assignedGroups'):
+                all_assignments[rgroup['userId']].append({
+                    'id': assignment.id,
+                    'head': assignment.forum,
+                    'tail': group['userId'],
+                    'weight': group['finalScore']
+                })
+            continue
+
+        reduced_assignment = {
+            'id': assignment.id,
+            'head': assignment.forum,
+            'tail': assignment.tail,
+            'weight': assignment.weight
+        }
+        all_assignments[reduced_assignment['tail']].append(reduced_assignment)
+
+    file_path = Path(assignments_dir).joinpath('assignments.json')
+
+    with open(file_path, 'w') as f:
+        json.dump(all_assignments, f, indent=4)
+
+def get_profile_expertise(openreview_client, config):
+    group_ids = convert_to_list(config['match_group'])
+    valid_members = get_profile_ids(openreview_client, group_ids)
+
+    profiles = openreview_client.search_profiles(ids=valid_members, term=None)
+
+    profiles_expertise = {}
+    for profile in profiles:
+        profiles_expertise[profile.id] = profile.content.get('expertise', None)
+
+    file_path = Path(profiles_expertise_dir).joinpath('profiles_expertise.json')
+
+    with open(file_path, 'w') as f:
+        json.dump(profiles_expertise, f, indent=4)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -292,6 +368,11 @@ if __name__ == '__main__':
         if not archive_dir.is_dir():
             archive_dir.mkdir()
         retrieve_expertise(openreview_client, config, excluded_ids_by_user, archive_dir, metadata)
+        if 'profiles_expertise' in config:
+            profiles_expertise_dir = dataset_dir.joinpath('profiles_expertise')
+            if not profiles_expertise_dir.is_dir():
+                profiles_expertise_dir.mkdir()
+            get_profile_expertise(openreview_client, config)
 
     # if invitation ID is supplied, collect records for each submission
     if 'paper_invitation' in config:
@@ -306,6 +387,12 @@ if __name__ == '__main__':
         if not bids_dir.is_dir():
             bids_dir.mkdir()
         get_bids(openreview_client, config)
+
+    if 'assignments' in config:
+        assignments_dir = dataset_dir.joinpath('assignments')
+        if not assignments_dir.is_dir():
+            assignments_dir.mkdir()
+        get_assignments(openreview_client, config)
 
     metadata['bid_counts'] = OrderedDict(
         sorted(metadata['bid_counts'].items(), key=lambda t: t[0]))
