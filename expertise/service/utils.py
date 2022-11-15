@@ -343,11 +343,18 @@ class JobConfig(object):
                     edge_inv_id = edge_inv.get('invitation', None)
                 if edge_inv_id is None or len(edge_inv_id) <= 0:
                     raise openreview.OpenReviewException('Bad request: Expertise invitation indicated but ID not provided')
-                label = openreview_client.get_invitation(edge_inv_id).reply.get('content', {}).get('label', {}).get('value-radio',['Include'])[0]
-                if 'exclude' not in label.lower():
-                    config.inclusion_inv = edge_inv_id
-                else:
-                    config.exclusion_inv = edge_inv_id
+
+                try:
+                    inv = openreview_client.get_invitation(edge_inv_id)
+                except:
+                    inv = None
+                
+                if inv:
+                    label = inv.reply.get('content', {}).get('label', {}).get('value-radio',['Include'])[0]
+                    if 'exclude' not in label.lower():
+                        config.inclusion_inv = edge_inv_id
+                    else:
+                        config.exclusion_inv = edge_inv_id
 
         if api_request.entityB['type'] == 'Group':
             config.alternate_match_group = [api_request.entityB['memberOf']]
@@ -359,11 +366,18 @@ class JobConfig(object):
                     edge_inv_id = edge_inv.get('invitation', None)
                 if edge_inv_id is None:
                     raise openreview.OpenReviewException('Bad request: Expertise invitation indicated but ID not provided')
-                label = openreview_client.get_invitation(edge_inv_id).reply.get('content', {}).get('label', {}).get('value-radio',['Include'])[0]
-                if 'include' in label.lower():
-                    config.alternate_inclusion_inv = edge_inv_id
-                else:
-                    config.alternate_exclusion_inv = edge_inv_id
+
+                try:
+                    inv = openreview_client.get_invitation(edge_inv_id)
+                except:
+                    inv = None
+                
+                if inv:
+                    label = inv.reply.get('content', {}).get('label', {}).get('value-radio',['Include'])[0]
+                    if 'include' in label.lower():
+                        config.alternate_inclusion_inv = edge_inv_id
+                    else:
+                        config.alternate_exclusion_inv = edge_inv_id
 
         # Handle Note cases
         config.paper_invitation = None
