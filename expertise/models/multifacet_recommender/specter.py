@@ -116,6 +116,7 @@ class _PredictManagerCustom(_PredictManager):
             paper_id = prediction_json['paper_id']
             cache_key = paper_id + "_" + str(self._metadata[paper_id]['mdate'])
             self._redis_con.tensorset(key=cache_key, tensor=np.array(prediction_json['embedding']))
+            self._redis_con.expire(cache_key, 2629746) ## Expire after 1 month
 
 
 def predictor_from_archive(archive: Archive, predictor_name: str = None,
@@ -211,7 +212,6 @@ class SpecterPredictor:
                                 "authors": [profile_id],
                                 "mdate": pub_mdate
                             }
-                        self._remove_keys_from_cache(publication["id"])
                 else:
                     print(f"Skipping publication {publication['id']}. Either title or abstract must be provided ")
         with open(os.path.join(self.work_dir, "specter_reviewer_paper_data.json"), 'w') as f_out:
